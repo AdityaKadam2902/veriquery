@@ -1,0 +1,1 @@
+"""Compiler and DuckDB executor."""
