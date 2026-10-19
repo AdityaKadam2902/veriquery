@@ -1,6 +1,6 @@
 # VeriQuery: Architecture and Delivery Plan
 
-**Version:** 2.1 | **Status:** Approved for build (Phase 0 pending) | **Owner:** Aditya
+**Version:** 2.2 | **Status:** Approved for build (Phase 0 in progress) | **Owner:** Aditya
 **Working title:** VeriQuery (final name decided in Phase 0, see D-012)
 **One-line pitch:** An open-source toolkit and public benchmark for measuring and enforcing the *numerical trustworthiness* of AI data agents, with an audit verifier that checks any agent's answer against governed metric definitions.
 
@@ -35,6 +35,7 @@ Reading order for a human or an AI assistant starting work:
 | 1.0 | Initial architecture. |
 | 2.0 | Repositioned after prior-art review (the core "LLM picks governed metric" idea is already established in industry). Added: related work, hypotheses, requirements with IDs, audit mode as lead product, interpretation echo, plan DSL, execution-based equivalence, as-of clock, corrected example metric, abstention and risk-coverage analysis, statistical protocol, dev/test split, contamination handling, importers, reproducibility rules, governance, realistic 8-10 week plan with gates, release plan, AI-assistant handoff protocol. Removed the circular AST-equivalence claim for attested mode. |
 | 2.1 | Added a full security architecture (trust boundaries, testable invariants, sandboxed audit execution, DuckDB lockdown, allow-lists and sensitivity tags, MCP and supply-chain controls, security evaluation with attack-success rate) and cost control (budget guardrails, circuit breaker, plan/result cache, cost per correct answer, cost-quality Pareto). New requirements FR-21 to FR-25, NFR-09 to NFR-11; new tasks T-208, T-209, T-310 to T-312, T-507 to T-509, T-607, T-608; ADRs 009 and 010; decisions D-023 to D-026; risks R13 to R15; timeline extended by about 1 to 1.5 weeks. |
+| 2.2 | Section 2 rewritten after the Phase 0 prior-art review (T-002): the typed-plan plus deterministic-compile pattern is established (dbt, PyDough, SPC, OKF Attested Computation); WRB (arXiv 2608.09254) is the closest work. Claims narrowed to C1 to C5 as worded in 2.2. See ADR-011. |
 
 ---
 
@@ -60,32 +61,35 @@ AI agents now answer business questions by querying databases. They fail in a da
 
 ## 2. Positioning and related work
 
-### 2.1 What already exists (and is not our claim)
+Full review with sources and read status: [`related_work.md`](related_work.md). Decision record: ADR-011.
 
-[VERIFY all items in the Week 0 prior-art review; figures below are as publicly reported.]
+### 2.1 What already exists (and is not our claim)
 
 | Work | What it shows | Relevance to us |
 |---|---|---|
-| **dbt Semantic Layer / MetricFlow** | Governed metrics generate SQL deterministically; an LLM selects metrics and dimensions | Same family as our attested agent. We are not claiming this idea. |
-| **dbt Labs 2026 text-to-SQL vs. semantic layer benchmark** (open source, `dbt-labs/dbt-llm-sl-bench`) | 11 questions, one insurance dataset, 20 runs per model; semantic-layer grounding raised accuracy (for example 90.0% to 98.2% for one frontier model on the modeled configuration) | Closest prior benchmark. Small, accuracy-focused. We widen to trust-failure categories and abstention. |
-| **Snowflake Cortex Analyst** | Semantic model YAML plus *verified queries*; vendor reports large accuracy lift from adding a semantic model | Verified queries are a production precedent for approved SQL. Our importer targets its semantic model format. |
-| **PyDough** (third-party) | LLM writes no SQL; reported 100% on dbt's benchmark | Confirms the "LLM never writes SQL" direction. |
-| **BIRD, Spider 2.0** | General text-to-SQL accuracy benchmarks | Measure SQL correctness, not governed-definition trust or refusal. |
-| **Cube, Looker, Databricks Genie** | Other semantic-layer and NL-analytics products | Context for related work. |
+| **dbt Semantic Layer / MetricFlow; dbt Labs 2026 benchmark update** (7 Apr 2026) | ACME Insurance, 11 questions, 20 runs. Modeled configuration: Claude Sonnet 4.6 90.0% to 98.2%, GPT-5.3 Codex 84.1% to 100%. Unmodeled: 64.5% text-to-SQL vs 72.7% semantic layer overall; out-of-scope questions score 0% for the semantic layer by construction. | Same family as B2. Small, accuracy-focused. |
+| **PyDough** (Bodo) | LLM writes PyDough, not SQL; vendor reports 100% over 220 runs on dbt's 11 questions (unmodeled schema). | "LLM never writes SQL" is established. |
+| **SPC, arXiv 2608.16663** (Aug 2026) | Planner selects governed identifiers; engine compiles and checks SQL; refusal path; counterfactual databases separate fan-out errors. 37/38 vs 21/38 solid success on 38 ACME questions; 0 wrong-but-executed in 114 runs. Single domain; public code omits questions, gold labels, fixtures, harness. | Very close to B2 and to perturbation-based checking. |
+| **Business Truth, arXiv 2608.09254** (Aug 2026): WarehouseReliabilityBench (WRB) and QueryProof | 400 frozen tasks, two synthetic warehouses, five categories with about half having no correct SQL; pre-registered, test split run once; rule-gated 7B agent over a semantic layer; false success 0.351 vs 0.754 of returned answers; checks were incomplete (0.163 dev and 0.333 validation of wrong answers passed them). Discloses single author, test exposure, confounded headline, adversarial stratum that ranks nothing. | **Closest to our thesis, categories and protocol.** We extend and stress-test it and credit it. |
+| **OKF v0.2 Attested Computation** (Google Cloud) | Sanctioned computation, agent supplies typed parameters only, executor receipt, deterministic attester, `stale_after`. Defers receipt formats, attester interface, semantic-layer templates. | Same contract as B2 and our verification record (ADR-012). |
+| **TrustSQL, Chen et al. (SIGMOD 2025), Zhong et al. 2020, Rumiantsau and Fokeev 2604.25149** | Penalty-based abstention scoring; adaptive abstention; distilled test suites (perturbed databases); paired benchmark of semantic-layer benefit. | Abstention scoring and perturbation equivalence are established. |
+| **Snowflake Cortex Analyst, BIRD, Spider 2.0, Cube, Looker, Databricks Genie** | Context. Figures not re-verified. | Context. |
 
 ### 2.2 What we add (the actual contribution)
 
-1. **A benchmark of *trust failures*, not just accuracy.** Eight categories (Section 10), including stale/deprecated metrics, ambiguity, and adversarial pressure, with scoring for refusal and clarification.
-2. **Abstention as a first-class metric.** Wrong-number rate vs. coverage as a risk-coverage curve per system and model.
-3. **Audit mode.** Works on top of any agent or existing semantic layer instead of replacing it, with a measured false-positive and false-negative rate for the verifier itself.
-4. **Portable verification record.** Every answer carries machine-checkable evidence (definition version, SQL hash, checks passed, data freshness).
-5. **Importers** so the tool can read the semantic definitions companies already maintain.
+1. **C1: an open, reproducible, multi-domain benchmark** with named trust-failure categories (ambiguity, stale or deprecated metrics, time boundaries, fan-out, adversarial pressure and injection), scored clarification and refusal, real data (Olist, TPC-H) plus synthetic, stratified family-disjoint splits, a locked test split and a frozen analysis plan.
+2. **C2: an audit verifier for third-party SQL** using perturbation-based equivalence against governed definitions, with its own measured precision, recall, false-alarm and UNMATCHED rates, including the share of wrong answers that rule-based checks miss and perturbation catches.
+3. **C3: B2 as a reference system and control**, not a novelty claim.
+4. **C4: abstention analysis** as risk-coverage curves, AURC and coverage at fixed risk across systems and models, with cluster-aware uncertainty.
+5. **C5: failure taxonomy** attributing errors to pipeline layers, plus importers, an MCP server and an OKF-compatible verification record (if ADR-012 is accepted).
 
 ### 2.3 Honest framing rules (apply in README, report, and posts)
 
-- Never claim the attested architecture is new. Claim the benchmark, the abstention analysis, and the audit tooling.
-- State that the benchmark measures *agreement with organizational definitions*; this is the intended construct, not an absolute notion of truth (see threats to validity, 10.9).
+- Never claim the attested architecture, the verification record, abstention scoring or perturbation equivalence is new. State plainly that SPC, PyDough, dbt, OKF Attested Computation, WRB, TrustSQL and Zhong et al. cover them.
+- Credit WRB explicitly and report a metric mapping to its Business Truth Rate and False Success Rate.
+- State that the benchmark measures *agreement with organizational definitions*, not absolute truth (threats to validity, 10.9).
 - Report where the verifier fails, with examples.
+- Reproducibility is a design goal: publish questions, gold labels, fixtures, harness, raw model outputs, verdicts and run metadata.
 
 ---
 
