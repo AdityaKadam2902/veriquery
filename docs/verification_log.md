@@ -101,3 +101,23 @@ Decision: **free tiers only**. OKF is to be named as prior art (D-001 wording); 
 | V-33 | Cortex Analyst accuracy claim, BIRD, Spider 2.0 figures | open | Not re-verified; drop or verify before the report. |
 | V-34 | WRB repository license | open | github.com/k-w-lee/query_proof: license not checked. Needed before reusing any WRB tasks. |
 | V-35 | Owner hardware for local models | recorded | HP Pavilion laptop, 16 GB RAM, GPU unknown (check Task Manager, Performance, GPU). Local model choice (M2/M4) is decided at T-006 from measured tokens per second. |
+
+## 8. T-006 smoke results on the owner's machine (2026-10-25)
+
+Config for both models: system instruction on, `responseMimeType` JSON, schema described in the prompt and validated by the client.
+
+| Model | Result |
+|---|---|
+| gemma-4-31b-it | 8/8 schema-valid on the first try after retry (first run without retry: 6 of 8 calls failed with Google 503/500 and zero 400s). Offline replay 8/8, identical. Mean latency 30.6 s per call; about 254 output tokens per call. |
+| gemma-4-26b-a4b-it | 8/8 schema-valid on the first try, 0 retries. Offline replay 8/8, identical. Mean latency 17.7 s per call; about 778 output tokens per call (likely includes thinking tokens; to confirm). |
+
+Conclusions
+- **V-16 resolved for the default config.** Both models accept system instructions and JSON mode. Caveat: n = 8 per model; the 95% Wilson lower bound for 8/8 is about 0.68, so re-measure at larger n (T-201 / P2) before quoting a rate.
+- **Transient failures are real.** 31B returned 503 and 500 in bursts. Retry with backoff worked (1 retry used in the second run). Log the infrastructure-failure rate per model and run, and make the harness resumable.
+- **Throughput.** At 18 to 30 s per call, 5,300 sequential calls would take about 44 hours. The binding limit is TPM 16K: about 11 to 14 hours at 2 to 2.5K tokens per call (assumed). The harness therefore needs about 4 to 8 concurrent workers inside the RPM/TPM limits.
+- **Early signal, not a result.** Both models produced kinds plan 5, clarify 1, refuse 2 where the smoke questions expect plan 4, clarify 1, refuse 3. One forecast or instruction-injection question was routed to a plan. Which one has not been inspected. This is the failure the deterministic layers must catch; no claim until measured at scale.
+| llama3.2:3b (Ollama, local) | 8/8 schema-valid on the first try, 0 retries, offline replay 8/8 identical. Mean latency 3.4 s per call; about 21 output tokens per call. Kinds: plan 5, refuse 3, **clarify 0** (the ambiguous question "revenue for July" was not clarified; question not yet inspected). |
+
+- **T-006 acceptance met:** cached structured calls verified on two providers (Gemini API and Ollama).
+- **M2 provisional:** llama3.2:3b via Ollama (local, no quota, fast, reproducible by anyone). Risk: floor effect. Confirm on the dev split that it is not near zero on everything before the test split is tagged; swap for an 8B local model or gemma-4-26b-a4b-it if it is.
+- The 3B model not clarifying an ambiguous question matches WRB's finding that a small model asked to pick a metric simply picks one; this is why the ambiguity gate is deterministic (ADR-005).
